@@ -8,6 +8,7 @@ const multer = require("multer");
 const path = require("path");
 const app = express();
 const PORT = process.env.PORT || 5000;
+const cloudinary = require("cloudinary").v2;
 
 dotenv.config();
 
@@ -32,21 +33,29 @@ app.use(
     credentials: true,
   }),
 );
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+// আপনার বর্তমান লাইন দুটি পরিবর্তন করে নিচের মতো লিখুন:
+app.use(express.json({ limit: "50mb" }));
+app.use(express.urlencoded({ limit: "50mb", extended: true }));
 
 // File upload config
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, "uploads/");
-  },
-  filename: (req, file, cb) => {
-    const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
-    cb(null, uniqueSuffix + path.extname(file.originalname));
-  },
-});
+// const storage = multer.diskStorage({
+//   destination: (req, file, cb) => {
+//     cb(null, "uploads/");
+//   },
+//   filename: (req, file, cb) => {
+//     const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
+//     cb(null, uniqueSuffix + path.extname(file.originalname));
+//   },
+// });
 
-const upload = multer({ storage });
+// const upload = multer({ storage });
+
+// File upload config (Using Memory Storage for Cloudinary/ImgBB)
+const storage = multer.memoryStorage();
+const upload = multer({
+  storage,
+  limits: { fileSize: 10 * 1024 * 1024 }, // ১০ মেগাবাইটের বেশি ফাইল অ্যালাউ করবে না
+});
 
 // Serve uploaded files
 app.use("/uploads", express.static("uploads"));
@@ -420,7 +429,43 @@ async function run() {
     // ============ PRODUCTS COLLECTION ============
 
     // POST: Upload image
-    app.post("/upload-image", upload.single("image"), (req, res) => {
+    // POST: Upload image
+    // app.post("/upload-image", upload.single("image"), (req, res) => {
+    //   try {
+    //     if (!req.file) {
+    //       return res.status(400).send({
+    //         success: false,
+    //         message: "No file uploaded",
+    //       });
+    //     }
+
+    //     // .env এর SERVER_URL ব্যবহার করুন (যা Vercel এ https://prokritirbazar-server.vercel.app)
+    //     const SERVER_URL =
+    //       process.env.SERVER_URL || `${req.protocol}://${req.get("host")}`;
+
+    //     // সম্পূর্ণ ইমেজের লিংক তৈরি
+    //     const imageUrl = `${SERVER_URL}/uploads/${req.file.filename}`;
+
+    //     res.status(200).send({
+    //       success: true,
+    //       url: imageUrl, // এই লিংকটিই ফ্রন্টএন্ডে বা SSLCommerz-এ পাঠাবেন
+    //     });
+    //   } catch (error) {
+    //     res.status(500).send({
+    //       success: false,
+    //       message: error.message,
+    //     });
+    //   }
+    // });
+    // Cloudinary config
+    cloudinary.config({
+      cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+      api_key: process.env.CLOUDINARY_API_KEY,
+      api_secret: process.env.CLOUDINARY_API_SECRET,
+    });
+
+    // POST: Upload image
+    app.post("/upload-image", upload.single("image"), async (req, res) => {
       try {
         if (!req.file) {
           return res.status(400).send({
@@ -429,11 +474,19 @@ async function run() {
           });
         }
 
-        const imageUrl = `${req.protocol}://${req.get("host")}/uploads/${req.file.filename}`;
+        // Convert memory buffer to Base64
+        const b64 = Buffer.from(req.file.buffer).toString("base64");
+        let dataURI = "data:" + req.file.mimetype + ";base64," + b64;
 
+        // Upload to Cloudinary
+        const result = await cloudinary.uploader.upload(dataURI, {
+          folder: "prokritir_bazar_products",
+        });
+
+        // Return live CDN URL
         res.status(200).send({
           success: true,
-          url: imageUrl,
+          url: result.secure_url,
         });
       } catch (error) {
         res.status(500).send({
@@ -442,7 +495,6 @@ async function run() {
         });
       }
     });
-
     // GET: Get all products
     app.get("/products", async (req, res) => {
       try {
